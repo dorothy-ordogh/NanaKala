@@ -14,7 +14,7 @@ type User struct {
 	FirstName string `json:"fname"`
 	LastName string `json:"lname"`
 	Email string `json:"email"`
-	Phone int64 `json:"phone"`
+	Phone string `json:"phone"`
 }
 
 
@@ -23,6 +23,8 @@ func HandleUser(res http.ResponseWriter, req *http.Request) {
 
 	switch req.Method {
 	case "POST":
+
+		fmt.Println(req.Body)
 		user := new(User)
 		decoder := json.NewDecoder(req.Body)
 		err := decoder.Decode(&user)
@@ -34,10 +36,7 @@ func HandleUser(res http.ResponseWriter, req *http.Request) {
 		// }
 		// fmt.Println(user)
 
-		prep, err := DB_CONNECTION.Prepare("INSERT INTO user (?, ?, ?, ?, ?)")
-		checkErr(err, res)
-		
-		result, err := prep.Exec(nil, user.FirstName, user.LastName, user.Email, user.Phone)
+		result, err := DB_CONNECTION.Exec("INSERT INTO user (user_id, user_fname, user_lname, user_email, user_phone) VALUES (?, ?, ?, ?, ?)", nil, user.FirstName, user.LastName, user.Email, user.Phone)
 		checkErr(err, res)
 
 		id, err := result.LastInsertId()
@@ -90,14 +89,12 @@ func HandleUserWithID(res http.ResponseWriter, req *http.Request) {
 		affected, err := result.RowsAffected()
 
 		if affected > 1 {
-			// error!! too many rows effected!
+			err = fmt.Errorf("Too many rows were affected, please verify userID: %d", userid)
+			checkErr(err, res)
 		}
 
-		outgoingJson, err := json.Marshal(user)
-		checkErr(err, res)
-
 		res.WriteHeader(http.StatusOK)
-		fmt.Fprint(res, string(outgoingJson))
+
 	case "POST":
 		res.WriteHeader(http.StatusMethodNotAllowed)
 	case "DELETE":
@@ -111,7 +108,8 @@ func HandleUserWithID(res http.ResponseWriter, req *http.Request) {
 		affected, err := result.RowsAffected()
 
 		if affected > 1 {
-			// error!! too many rows effected!
+			err = fmt.Errorf("Too many rows were affected, please verify userID: %d", userid)
+			checkErr(err, res)
 		}
 
 		res.WriteHeader(http.StatusOK)
@@ -128,12 +126,62 @@ func HandleUserExpenses(res http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case "GET":
 		// lookup user expenses and return all
+
+		expenseSlice := make([]Expense, 1)
+
+		prep, err := DB_CONNECTION.Prepare("SELECT expense_id, expense_amt, split_id, expense_name FROM expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id WHERE T2.user_id = ?")
+		checkErr(err, res)
+		
+		rows, err = prep.Query(userid)
+
+		for rows.Next() {
+			var exp Expense 
+			var sid int64
+			err = rows.Scan(&exp.ExpenseID, &exp.ExpenseAmount, &sid, &exp.ExpenseName)
+			checkErr(err, res)
+
+			// How splitting works:
+			// If an expense is split, it will have a split ID
+			// All expenses that have the same split ID was a split
+			// of a single expense between multiple people. Essentially,
+			// a split expense forms several expenses for different users
+
+			prep, err := DB_CONNECTION.Prepare("SELECT cat_name FROM category T1 INNER JOIN expense_cat T2 ON T1.cat_id = T2.cat_id WHERE T2.expense_id = ?")
+			checkErr(err, res)
+		
+			err = prep.QueryRow(exp.ExpenseID).Scan(&exp.ExpenseCategory)
+			checkErr(err, res)
+
+			expenseSlice = append(expenseSlice, exp)
+		}
+
+		outgoingJson, err := json.Marshal(expenseSlice)
+		checkErr(err, res)
+
+		res.WriteHeader(http.StatusOK)
+		fmt.Fprint(res, string(outgoingJson))
+
 	case "PUT":
 		res.WriteHeader(http.StatusMethodNotAllowed)
 	case "POST":
 		res.WriteHeader(http.StatusMethodNotAllowed)
 	case "DELETE":
 		// delete all user expenses
+
+		prep, err := DB_CONNECTION.Prepare("DELETE T1 FROM expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id WHERE T2.user_id = ?")
+		checkErr(err, res)
+		
+		result, err := prep.Exec(userid)
+		checkErr(err, res)
+
+		affected, err := result.RowsAffected()
+
+		if affected < 1 {
+			err = fmt.Errorf("Failed to delete expenses for user: %d", userid)
+			checkErr(err, res)
+		}
+
+		res.WriteHeader(http.StatusOK)
 	}
 }
 
@@ -147,12 +195,53 @@ func HandleUserBudgets(res http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case "GET":
 		// lookup user budgets and return all
+		budgetSlice := make([]Budget, 1)
+
+		prep, err := DB_CONNECTION.Prepare("SELECT budget_id, budget_amt, budget_name FROM budget T1 INNER JOIN user_budgets T2 ON T1.budget_id = T2.budget_id WHERE T2.user_id = ?")
+		checkErr(err, res)
+		
+		rows, err = prep.Query(userid)
+
+		for rows.Next() {
+			var b Budget 
+			err = rows.Scan(&b.BudgetID, &b.BudgetAmount, &b.BudgetName)
+			checkErr(err, res)
+
+			prep, err := DB_CONNECTION.Prepare("SELECT cat_name FROM category T1 INNER JOIN budget_cat T2 ON T1.cat_id = T2.cat_id WHERE T2.budget_id = ?")
+			checkErr(err, res)
+		
+			err = prep.QueryRow(b.BudgetID).Scan(&b.BudgetCategory)
+			checkErr(err, res)
+
+			budgetSlice = append(budgetSlice, exp)
+		}
+
+		outgoingJson, err := json.Marshal(budgetSlice)
+		checkErr(err, res)
+
+		res.WriteHeader(http.StatusOK)
+		fmt.Fprint(res, string(outgoingJson))
 	case "PUT":
 		res.WriteHeader(http.StatusMethodNotAllowed)
 	case "POST":
 		res.WriteHeader(http.StatusMethodNotAllowed)
 	case "DELETE":
 		// delete all user budgets
+
+		prep, err := DB_CONNECTION.Prepare("DELETE T1 FROM budget T1 INNER JOIN user_budgets T2 ON T1.budget_id = T2.budget_id WHERE T2.user_id = ?")
+		checkErr(err, res)
+		
+		result, err := prep.Exec(userid)
+		checkErr(err, res)
+
+		affected, err := result.RowsAffected()
+
+		if affected < 1 {
+			err = fmt.Errorf("Failed to delete budgets for user: %d", userid)
+			checkErr(err, res)
+		}
+
+		res.WriteHeader(http.StatusOK)
 	}
 }
 

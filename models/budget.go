@@ -13,7 +13,7 @@ type Budget struct {
 	BudgetID int64 `json:"id"`
 	BudgetAmount float64 `json:"amt"`
 	BudgetName string `json:"name"`
-	BudgetCategories []string `json:"categories"`
+	BudgetCategory string `json:"categories"`
 	BudgetGID int64 `json:"gid"`
 	BudgetUID int64 `json:"uid"`
 }
