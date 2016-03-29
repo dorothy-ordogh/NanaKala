@@ -1,14 +1,12 @@
 package models
 
 import (
-	// "encoding/json"
+	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
 	"net/http"
-	"encoding/json"
-	// "time"
-	// "math/rand"
 	"io/ioutil"
+	"strconv"
 )
 
 type Group struct {
@@ -91,18 +89,18 @@ func HandleGroupWithID(res http.ResponseWriter, req *http.Request) {
 		// gets the group with the specified ID
 		// will likely need a join to join the group members, group, and user tables
 
-		prep, err := DB_CONNECTION.Prepare("SELECT * FROM group WHERE group_id = ?")
+		prep, err := DB_CONNECTION.Prepare("SELECT * FROM `group` WHERE group_id = ?")
 		checkErr(err, res)
 		
 		var g Group
-		gusers := make([]User, 1)
+		gusers := make([]User, 0)
 		err = prep.QueryRow(gid).Scan(&g.GroupID, &g.GroupName)
 		checkErr(err, res)
 
-		prep, err := DB_CONNECTION.Prepare("SELECT user_id, user_fname, user_lname, user_email, user_phone FROM group_members T1 INNER JOIN user T2 ON T1.member_id = T2.user_id WHERE T1.group_id = ?")
+		prep, err = DB_CONNECTION.Prepare("SELECT user_id, user_fname, user_lname, user_email, user_phone FROM group_members T1 INNER JOIN user T2 ON T1.member_id = T2.user_id WHERE T1.group_id = ?")
 		checkErr(err, res)
 		
-		rows, err = prep.Query(gid)
+		rows, err := prep.Query(gid)
 
 		for rows.Next() {
 			var u User
@@ -122,11 +120,91 @@ func HandleGroupWithID(res http.ResponseWriter, req *http.Request) {
 
 	case "PUT":
 		// update group name or users
+		group := new(Group)
+		body, err := ioutil.ReadAll(req.Body)
+		checkErr(err, res)
+		err = json.Unmarshal(body, &group)
+		checkErr(err, res)
+
+		prep, err := DB_CONNECTION.Prepare("UPDATE `group` SET group_name = ? WHERE group_id = ?")
+		checkErr(err, res)
+		
+		result, err := prep.Exec(group.GroupName, gid)
+		checkErr(err, res)
+
+		affected, err := result.RowsAffected()
+
+		if affected > 1 {
+			err = fmt.Errorf("Too many rows were affected, please verify group ID: %d", gid)
+			checkErr(err, res)
+		}
+
+		prep, err = DB_CONNECTION.Prepare("SELECT member_id FROM group_members WHERE group_id = ?")
+		checkErr(err, res)
+
+		rows, err := prep.Query(gid)
+		checkErr(err, res)
+
+		var uidsInDB []int64
+
+		for rows.Next() {
+			var uid int64
+			err = rows.Scan(&uid)
+			checkErr(err, res)
+
+			uidsInDB = append(uidsInDB, uid)
+		}
+
+		for _, guser := range group.GroupUsers {
+
+			contains := containsUser(uidsInDB, guser.UserID)
+			if contains != -1 {
+				// a = append(a[:i], a[i+1:]...)
+				uidsInDB = append(uidsInDB[:contains], uidsInDB[contains+1:]...)
+			}
+			var exists int
+
+			prep, err := DB_CONNECTION.Prepare("SELECT EXISTS(SELECT 1 FROM `user` WHERE user_id = ?)")
+			checkErr(err, res)
+
+			err = prep.QueryRow(guser.UserID).Scan(&exists)
+			checkErr(err, res)
+
+			if exists == 1 {
+				result, err := DB_CONNECTION.Exec("INSERT IGNORE INTO group_members (group_id, member_id) VALUES (?, ?)", group.GroupID, guser.UserID)
+				checkErr(err, res)
+
+				_, err = result.RowsAffected()
+				checkErr(err, res)
+
+			} else {
+				err = fmt.Errorf("User with id: %d does not exist", guser.UserID)
+				checkErr(err, res)
+			}
+		} 
+
+		for _, uid := range uidsInDB {
+			// delete group in db and group member associations with group 
+			prep, err := DB_CONNECTION.Prepare("DELETE FROM group_members WHERE group_id = ? AND member_id = ?")
+			checkErr(err, res)
+		
+			result, err := prep.Exec(gid, uid)
+			checkErr(err, res)
+
+			affected, err := result.RowsAffected()
+
+			if affected < 1 {
+				err = fmt.Errorf("Does not exist in the table, please verify user ID: %d", uid)
+				checkErr(err, res)
+			}
+		}
+
+		res.WriteHeader(http.StatusOK)
 	case "POST":
 		res.WriteHeader(http.StatusMethodNotAllowed)
 	case "DELETE":
 		// delete group in db and group member associations with group 
-		prep, err := DB_CONNECTION.Prepare("DELETE FROM group WHERE group_id = ?")
+		prep, err := DB_CONNECTION.Prepare("DELETE FROM `group` WHERE group_id = ?")
 		checkErr(err, res)
 		
 		result, err := prep.Exec(gid)
@@ -135,9 +213,8 @@ func HandleGroupWithID(res http.ResponseWriter, req *http.Request) {
 		affected, err := result.RowsAffected()
 
 		if affected > 1 {
-			fmt.Println("more than 1 row affected. not sure if this is cascade")
-			// err = fmt.Errorf("Too many rows were affected, please verify userID: %d", userid)
-			// checkErr(err, res)
+			err = fmt.Errorf("Too many rows were affected, please verify group ID: %d", gid)
+			checkErr(err, res)
 		}
 
 		res.WriteHeader(http.StatusOK)
@@ -149,8 +226,6 @@ func HandleGroupExpenses(res http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	gid := vars["id"]
 
-	fmt.Println(gid)
-
 	switch req.Method {
 	case "GET":
 		// lookup group expenses and return all
@@ -160,18 +235,12 @@ func HandleGroupExpenses(res http.ResponseWriter, req *http.Request) {
 		prep, err := DB_CONNECTION.Prepare("SELECT expense_id, expense_amt, split_id, expense_name FROM expense T1 INNER JOIN group_expenses T2 ON T1.expense_id = T2.expense_id WHERE T2.group_id = ?")
 		checkErr(err, res)
 		
-		rows, err = prep.Query(gid)
+		rows, err := prep.Query(gid)
 
 		for rows.Next() {
 			var exp Expense 
 			var sid int64
 			err = rows.Scan(&exp.ExpenseID, &exp.ExpenseAmount, &sid, &exp.ExpenseName)
-			checkErr(err, res)
-
-			prep, err := DB_CONNECTION.Prepare("SELECT cat_name FROM category T1 INNER JOIN expense_cat T2 ON T1.cat_id = T2.cat_id WHERE T2.expense_id = ?")
-			checkErr(err, res)
-		
-			err = prep.QueryRow(exp.ExpenseID).Scan(&exp.ExpenseCategory)
 			checkErr(err, res)
 
 			expenseSlice = append(expenseSlice, exp)
@@ -190,7 +259,7 @@ func HandleGroupExpenses(res http.ResponseWriter, req *http.Request) {
 	case "DELETE":
 		// delete all group expenses
 
-		rep, err := DB_CONNECTION.Prepare("DELETE T1 FROM expense T1 INNER JOIN group_expenses T2 ON T1.expense_id = T2.expense_id WHERE T2.group_id = ?")
+		prep, err := DB_CONNECTION.Prepare("DELETE T1 FROM expense T1 INNER JOIN group_expenses T2 ON T1.expense_id = T2.expense_id WHERE T2.group_id = ?")
 		checkErr(err, res)
 		
 		result, err := prep.Exec(gid)
@@ -210,33 +279,37 @@ func HandleGroupExpenses(res http.ResponseWriter, req *http.Request) {
 func HandleGroupBudgets(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
 	vars := mux.Vars(req)
-	userid := vars["id"]
-
-	fmt.Println(userid)
+	gid := vars["id"]
 
 	switch req.Method {
 	case "GET":
 		// lookup group budgets and return all
+		budgetSlice := make([]Budget, 0)
 
-		budgetSlice := make([]Budget, 1)
-
-		prep, err := DB_CONNECTION.Prepare("SELECT budget_id, budget_amt, budget_name FROM budget T1 INNER JOIN group_budgets T2 ON T1.budget_id = T2.budget_id WHERE T2.group_id = ?")
+		prep, err := DB_CONNECTION.Prepare("SELECT T1.budget_id, budget_amt, budget_name FROM budget T1 INNER JOIN group_budgets T2 ON T1.budget_id = T2.budget_id WHERE T2.group_id = ?")
 		checkErr(err, res)
 		
-		rows, err = prep.Query(gid)
+		rows, err := prep.Query(gid)
 
 		for rows.Next() {
 			var b Budget 
 			err = rows.Scan(&b.BudgetID, &b.BudgetAmount, &b.BudgetName)
 			checkErr(err, res)
 
-			prep, err := DB_CONNECTION.Prepare("SELECT cat_name FROM category T1 INNER JOIN budget_cat T2 ON T1.cat_id = T2.cat_id WHERE T2.budget_id = ?")
+			if b.BudgetID == 0 {
+				continue
+			}
+
+			fmt.Println(b.BudgetID)
+			prep, err = DB_CONNECTION.Prepare("SELECT cat_id FROM budget_cat WHERE budget_id = ?")
 			checkErr(err, res)
 		
 			err = prep.QueryRow(b.BudgetID).Scan(&b.BudgetCategory)
 			checkErr(err, res)
 
-			budgetSlice = append(budgetSlice, exp)
+			b.BudgetGID, err = strconv.ParseInt(gid, 10, 64)
+
+			budgetSlice = append(budgetSlice, b)
 		}
 
 		outgoingJson, err := json.Marshal(budgetSlice)
@@ -261,10 +334,19 @@ func HandleGroupBudgets(res http.ResponseWriter, req *http.Request) {
 		affected, err := result.RowsAffected()
 
 		if affected < 1 {
-			err = fmt.Errorf("Failed to delete budgets for user: %d", gid)
+			err = fmt.Errorf("Failed to delete budgets for group: %d", gid)
 			checkErr(err, res)
 		}
 
 		res.WriteHeader(http.StatusOK)
 	}
+}
+
+func containsUser(s []int64, id int64) int {
+    for i, a := range s {
+        if a == id {
+            return i
+        }
+    }
+    return -1
 }

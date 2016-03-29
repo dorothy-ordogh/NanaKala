@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	"net/http"
-	// "time"
-	// "math/rand"
 )
 
 type User struct {
@@ -24,17 +22,10 @@ func HandleUser(res http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case "POST":
 
-		fmt.Println(req.Body)
 		user := new(User)
 		decoder := json.NewDecoder(req.Body)
 		err := decoder.Decode(&user)
 		checkErr(err, res)
-		// if user.UserID == 0 {
-		// 	seed := rand.NewSource(time.Now().UnixNano())
-  //   		randomNumber := rand.New(seed)
-  //   		user.UserID = randomNumber.Int63()
-		// }
-		// fmt.Println(user)
 
 		result, err := DB_CONNECTION.Exec("INSERT INTO user (user_id, user_fname, user_lname, user_email, user_phone) VALUES (?, ?, ?, ?, ?)", nil, user.FirstName, user.LastName, user.Email, user.Phone)
 		checkErr(err, res)
@@ -91,6 +82,9 @@ func HandleUserWithID(res http.ResponseWriter, req *http.Request) {
 		if affected > 1 {
 			err = fmt.Errorf("Too many rows were affected, please verify userID: %d", userid)
 			checkErr(err, res)
+		} else if affected < 1 {
+			err = fmt.Errorf("User does not exist, please verify user ID: %d", userid)
+			checkErr(err, res)
 		}
 
 		res.WriteHeader(http.StatusOK)
@@ -121,8 +115,6 @@ func HandleUserExpenses(res http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	userid := vars["id"]
 
-	fmt.Println(userid)
-
 	switch req.Method {
 	case "GET":
 		// lookup user expenses and return all
@@ -132,7 +124,7 @@ func HandleUserExpenses(res http.ResponseWriter, req *http.Request) {
 		prep, err := DB_CONNECTION.Prepare("SELECT expense_id, expense_amt, split_id, expense_name FROM expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id WHERE T2.user_id = ?")
 		checkErr(err, res)
 		
-		rows, err = prep.Query(userid)
+		rows, err := prep.Query(userid)
 
 		for rows.Next() {
 			var exp Expense 
@@ -145,12 +137,6 @@ func HandleUserExpenses(res http.ResponseWriter, req *http.Request) {
 			// All expenses that have the same split ID was a split
 			// of a single expense between multiple people. Essentially,
 			// a split expense forms several expenses for different users
-
-			prep, err := DB_CONNECTION.Prepare("SELECT cat_name FROM category T1 INNER JOIN expense_cat T2 ON T1.cat_id = T2.cat_id WHERE T2.expense_id = ?")
-			checkErr(err, res)
-		
-			err = prep.QueryRow(exp.ExpenseID).Scan(&exp.ExpenseCategory)
-			checkErr(err, res)
 
 			expenseSlice = append(expenseSlice, exp)
 		}
@@ -190,8 +176,6 @@ func HandleUserBudgets(res http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	userid := vars["id"]
 
-	fmt.Println(userid)
-
 	switch req.Method {
 	case "GET":
 		// lookup user budgets and return all
@@ -200,20 +184,14 @@ func HandleUserBudgets(res http.ResponseWriter, req *http.Request) {
 		prep, err := DB_CONNECTION.Prepare("SELECT budget_id, budget_amt, budget_name FROM budget T1 INNER JOIN user_budgets T2 ON T1.budget_id = T2.budget_id WHERE T2.user_id = ?")
 		checkErr(err, res)
 		
-		rows, err = prep.Query(userid)
+		rows, err := prep.Query(userid)
 
 		for rows.Next() {
 			var b Budget 
 			err = rows.Scan(&b.BudgetID, &b.BudgetAmount, &b.BudgetName)
 			checkErr(err, res)
 
-			prep, err := DB_CONNECTION.Prepare("SELECT cat_name FROM category T1 INNER JOIN budget_cat T2 ON T1.cat_id = T2.cat_id WHERE T2.budget_id = ?")
-			checkErr(err, res)
-		
-			err = prep.QueryRow(b.BudgetID).Scan(&b.BudgetCategory)
-			checkErr(err, res)
-
-			budgetSlice = append(budgetSlice, exp)
+			budgetSlice = append(budgetSlice, b)
 		}
 
 		outgoingJson, err := json.Marshal(budgetSlice)
@@ -247,7 +225,7 @@ func HandleUserBudgets(res http.ResponseWriter, req *http.Request) {
 
 func checkErr(err error, res http.ResponseWriter) {
 	if err != nil {
-		http.Error(res, err.Error(), http.StatusInternalServerError)
+		http.Error(res, err.Error(), http.StatusBadRequest)
 		return
 	}
 }
