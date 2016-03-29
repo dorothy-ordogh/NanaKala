@@ -94,15 +94,44 @@ func HandleExpense(res http.ResponseWriter, req *http.Request) {
     		randomNumber := rand.New(seed)
     		splitid := randomNumber.Int63()
 
-			for _, split := range exp.SplitWith {
+			result, err := DB_CONNECTION.Exec("INSERT INTO expense (expense_id, expense_amt, split_id, expense_name) VALUES (?, ?, ?, ?)", nil, exp.ExpenseAmount, splitid, exp.ExpenseName)
+			checkErr(err, res)
 
-				result, err := DB_CONNECTION.Exec("INSERT INTO expense (expense_id, expense_amt, split_id) VALUES (?, ?, ?)", nil, split.SplitAmount, splitid)
+			expid, err := result.LastInsertId() 
+			exp.ExpenseID = expid  
+
+			if exp.ExpenseCategory != 0 {
+				result, err := DB_CONNECTION.Exec("INSERT INTO expense_cat (cat_id, expense_id) VALUES (?, ?)", exp.ExpenseCategory, exp.ExpenseID)
 				checkErr(err, res)
 
-				expid, err := result.LastInsertId()
+				affected, err := result.RowsAffected()
+
+				if affected < 1 {
+					err = fmt.Errorf("No insert, please verify category: %d", exp.ExpenseCategory)
+					checkErr(err, res)
+				}
+			}
+
+			if exp.UnderBudgetID != 0 {
+				result, err := DB_CONNECTION.Exec("INSERT INTO budget_expenses (expense_id, budget_id) VALUES (?, ?)", exp.ExpenseID, exp.UnderBudgetID)
+				checkErr(err, res)
+
+				affected, err := result.RowsAffected()
+
+				if affected < 1 {
+					err = fmt.Errorf("No insert, please verify budget ID %d exists", exp.UnderBudgetID)
+					checkErr(err, res)
+				}
+			} 		
+
+			for _, split := range exp.SplitWith {
+
+				result, err := DB_CONNECTION.Exec("INSERT INTO expense (expense_id, expense_amt, split_id, expense_name) VALUES (?, ?, ?, ?)", nil, split.SplitAmount, splitid, exp.ExpenseName)
+				checkErr(err, res)
+
+				expid, err = result.LastInsertId()
 
 				usr := split.SplitUser
-				fmt.Println(usr)
 
 				result, err = DB_CONNECTION.Exec("INSERT INTO user_expenses (expense_id, user_id) VALUES (?, ?)", expid, usr.UserID)
 				checkErr(err, res)
@@ -159,6 +188,77 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case "GET":
 		// lookup expense in db by id and return
+		prep, err := DB_CONNECTION.Prepare("SELECT expense_id, expense_amt, expense_name, split_id FROM expense WHERE expense_id = ?")
+		checkErr(err, res)
+		
+		var exp Expense
+		var splitid int64
+		splits := make([]Split, 0)
+		err = prep.QueryRow(expid).Scan(&exp.ExpenseID, &exp.ExpenseID, &exp.ExpenseName, &splitid)
+		checkErr(err, res)
+
+		if splitid == 0 {
+			prep, err = DB_CONNECTION.Prepare("SELECT group_id FROM group_expenses WHERE expense_id = ?")
+			checkErr(err, res)
+
+			err = prep.QueryRow(expid).Scan(&exp.ExpenseGID)
+			checkErr(err, res)
+
+			prep, err = DB_CONNECTION.Prepare("SELECT budget_id FROM budget_expenses WHERE expense_id = ?")
+			checkErr(err, res)
+
+			err = prep.QueryRow(expid).Scan(&exp.UnderBudgetID)
+			checkErr(err, res)
+
+			prep, err = DB_CONNECTION.Prepare("SELECT cat_id FROM expense_cat WHERE expense_id = ?")
+			checkErr(err, res)
+
+			err = prep.QueryRow(expid).Scan(&exp.ExpenseCategory)
+			checkErr(err, res)
+
+		} else {
+			prep, err = DB_CONNECTION.Prepare("SELECT user_id, expense_amt FROM expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id WHERE T1.split_id = ?")
+			checkErr(err, res)
+		
+			rows, err := prep.Query(splitid)
+
+			for rows.Next() {
+				var uid int64
+				var amt float64
+				err = rows.Scan(&uid, &amt)
+				checkErr(err, res)
+
+				prep, err = DB_CONNECTION.Prepare("SELECT user_id, user_fname, user_lname, user_email, user_phone FROM user WHERE user_id = ?")
+				checkErr(err, res)
+
+				var u User
+				err = prep.QueryRow(uid).Scan(&u.UserID, &u.FirstName, &u.LastName, &u.Email, &u.Phone)
+				checkErr(err, res)
+
+				split := Split{u, amt, splitid}
+				splits = append(splits, split)
+			}
+
+			exp.SplitWith = splits
+
+			prep, err = DB_CONNECTION.Prepare("SELECT budget_id FROM budget_expenses WHERE expense_id = ?")
+			checkErr(err, res)
+
+			err = prep.QueryRow(expid).Scan(&exp.UnderBudgetID)
+			checkErr(err, res)
+
+			prep, err = DB_CONNECTION.Prepare("SELECT cat_id FROM expense_cat WHERE expense_id = ?")
+			checkErr(err, res)
+
+			err = prep.QueryRow(expid).Scan(&exp.ExpenseCategory)
+			checkErr(err, res)
+		}
+
+		outgoingJson, err := json.Marshal(exp)
+		checkErr(err, res)
+
+		res.WriteHeader(http.StatusOK)
+		fmt.Fprint(res, string(outgoingJson))
 
 	case "PUT":
 		// update expense in db by first lookup and then posting
