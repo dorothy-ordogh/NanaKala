@@ -3,7 +3,7 @@ What is NanaKala? In Hawaiian, "nana" is to watch or observe, and "kala" is mone
 
 ### Setting up
 #### Setting up the Server
-NanaKala runs on Go 1.5.3 and uses MySql 5.7.11. Please make sure your system is running these versions to guarentee successful integration.
+NanaKala runs on Go 1.5.3 and uses MySql 5.7.11. Please make sure your system is running these versions to guarantee successful integration.
 
 Once your system is running the right version, fork the repo and make sure to get the following libraries:
 The Gorilla Web Toolkit by running 
