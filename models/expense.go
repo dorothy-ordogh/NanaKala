@@ -187,6 +187,18 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 	
 	switch req.Method {
 	case "GET":
+
+		prep, err := DB_CONNECTION.Prepare("SELECT EXISTS(SELECT 1 FROM expense WHERE expense_id = ?)")
+		checkErr(err, res)
+
+		err = prep.QueryRow(expid).Scan(&exists)
+		checkErr(err, res)
+
+		if exists == 0 {
+			err = fmt.Errorf("The expense requested does not exist, please verify ID: %d", expid)
+			checkErr(err, res)
+		}
+
 		// lookup expense in db by id and return
 		prep, err := DB_CONNECTION.Prepare("SELECT expense_id, expense_amt, expense_name, split_id FROM expense WHERE expense_id = ?")
 		checkErr(err, res)
@@ -262,6 +274,225 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 
 	case "PUT":
 		// update expense in db by first lookup and then posting
+
+		exp := new(Expense)
+		body, err := ioutil.ReadAll(req.Body)
+		checkErr(err, res)
+		err = json.Unmarshal(body, &exp)
+		checkErr(err, res)
+
+		prep, err := DB_CONNECTION.Prepare("SELECT EXISTS(SELECT 1 FROM expense WHERE expense_id = ?)")
+		checkErr(err, res)
+
+		err = prep.QueryRow(expid).Scan(&exists)
+		checkErr(err, res)
+
+		if exists == 0 {
+			err = fmt.Errorf("The expense requested doesn't exist, please verify ID: %d", expid)
+			checkErr(err, res)
+		}
+
+		result, err := DB_CONNECTION.Exec("UPDATE expense SET expense_name = ?, expense_amt = ? WHERE expense_id = ?", exp.ExpenseName, exp.ExpenseAmount, expid)
+		checkErr(err, res)
+			
+		affected, err := result.RowsAffected()
+
+		if affected > 1 {
+			err = fmt.Errorf("Too many rows were affected, please verify expense ID: %d", expid)
+			checkErr(err, res)
+		}
+
+		if exp.ExpenseCategory != 0 {
+			result, err := DB_CONNECTION.Exec("UPDATE expense_cat SET cat_id = ? WHERE expense_id = ?", exp.ExpenseCategory, expid)
+			checkErr(err, res)
+
+			affected, err := result.RowsAffected()
+
+			if affected < 1 {
+				result, err := DB_CONNECTION.Exec("INSERT INTO expense_cat (cat_id, expense_id) VALUES (?, ?)", exp.ExpenseCategory, expid)
+				checkErr(err, res)
+			}
+		} else {
+			_, err := DB_CONNECTION.Exec("UPDATE expense_cat SET cat_id = ? WHERE expense_id = ?", exp.ExpenseCategory, expid)
+			checkErr(err, res)
+		}
+
+		if exp.UnderBudgetID != 0 {
+			result, err := DB_CONNECTION.Exec("UPDATE budget_expenses SET budget_id = ? WHERE expense_id = ?", exp.UnderBudgetID, expid)
+			checkErr(err, res)
+
+			affected, err := result.RowsAffected()
+
+			if affected < 1 {
+				result, err := DB_CONNECTION.Exec("INSERT INTO budget_expenses (expense_id, budget_id) VALUES (?, ?)", expid, exp.UnderBudgetID)
+				checkErr(err, res)
+			}
+		} else {
+			_, err := DB_CONNECTION.Exec("DELETE FROM budget_expenses WHERE expense_id = ?", expid)
+			checkErr(err, res)
+		}
+
+		if exp.ExpenseGID != 0 {
+			result, err = DB_CONNECTION.Exec("UPDATE group_expenses SET group_id = ? WHERE expense_id = ?", exp.ExpenseGID, expid)
+			checkErr(err, res)
+
+			affected, err := result.RowsAffected()
+
+			if affected < 1 {
+				result, err := DB_CONNECTION.Exec("INSERT INTO group_expenses (expense_id, group_id) VALUES (?, ?)", expid, exp.ExpenseGID)
+				checkErr(err, res)
+			}
+		} else {
+			_, err = DB_CONNECTION.Exec("DELETE FROM group_expenses WHERE expense_id = ?", expid)
+			checkErr(err, res)
+		}
+
+		if len(exp.SplitWith) > 0 {
+
+			var splitid int64
+			prep, err = DB_CONNECTION.Prepare("SELECT split_id FROM expense WHERE expense_id = ?")
+			checkErr(err, res)
+
+			err = prep.QueryRow(expid).Scan(&splitid)
+			checkErr(err, res)
+
+			prep, err = DB_CONNECTION.Prepare("SELECT T1.user_id FROM user_expenses T1 INNER JOIN expense T2 ON T1.expense_id = T2.expense_id WHERE split_id = ?")
+			checkErr(err, res)
+
+			rows, err := prep.Query(splitid)
+			checkErr(err, res)
+
+			var uidsInDB []int64
+
+			for rows.Next() {
+				var uid int64
+				err = rows.Scan(&uid)
+				checkErr(err, res)
+
+				uidsInDB = append(uidsInDB, uid)
+			}
+
+			for _, split := range exp.SplitWith {
+
+				usr := split.SplitUser
+				var usrExpenseId int64
+
+				contains := containsUser(uidsInDB, usr.UserID)
+				if contains != -1 {
+					// a = append(a[:i], a[i+1:]...)
+					uidsInDB = append(uidsInDB[:contains], uidsInDB[contains+1:]...)
+				}
+
+				prep, err := DB_CONNECTION.Prepare("UPDATE expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id SET T1.expense_amt = ?, T1.expense_name = ? WHERE T1.split_id = ? AND T2.user_id = ?")
+				checkErr(err, res)
+
+				result, err := prep.Exec(split.SplitAmount, exp.ExpenseName, splitid, usr.UserID)
+				checkErr(err, res)
+
+				affected, err := result.RowsAffected()
+
+				if affected < 1 {
+					result, err = DB_CONNECTION.Exec("INSERT INTO expense (expense_id, expense_amt, expense_name, split_id) VALUES (?, ?, ?, ?)", nil, split.SplitAmount, exp.ExpenseName, splitid)
+					checkErr(err, res)
+
+					usrExpenseId, err = result.LastInsertId()
+					checkErr(err, res)
+
+					result, err = DB_CONNECTION.Exec("INSERT INTO user_expenses (expense_id, user_id) VALUES (?, ?)", usrExpenseId, usr.UserID)
+					checkErr(err, res)
+
+					affected, err := result.RowsAffected()
+
+					if affected < 1 {
+						err = fmt.Errorf("No insert, please verify user ID: %d", usr.UserID)
+						checkErr(err, res)
+					}
+
+					if exp.ExpenseCategory != 0 {
+						result, err := DB_CONNECTION.Exec("INSERT INTO expense_cat (cat_id, expense_id) VALUES (?, ?)", exp.ExpenseCategory, usrExpenseId)
+						checkErr(err, res)
+
+						affected, err := result.RowsAffected()
+
+						if affected < 1 {
+							err = fmt.Errorf("No insert, please verify category: %d", exp.ExpenseCategory)
+							checkErr(err, res)
+						}
+					}
+
+					if exp.UnderBudgetID != 0 {
+						result, err := DB_CONNECTION.Exec("INSERT INTO budget_expenses (expense_id, budget_id) VALUES (?, ?)", usrExpenseId, exp.UnderBudgetID)
+						checkErr(err, res)
+
+						affected, err := result.RowsAffected()
+
+						if affected < 1 {
+							err = fmt.Errorf("No insert, please verify budget ID %d exists", exp.UnderBudgetID)
+							checkErr(err, res)
+						}
+					}
+				} else {
+					if exp.ExpenseCategory != 0 {
+						prep, err := DB_CONNECTION.Prepare("UPDATE expense_cat T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id SET T1.cat_id = ? WHERE T3.split_id = ?, T2.user_id = ?")
+						checkErr(err, res)
+						result, err := prep.Exec(exp.ExpenseCategory, splitid, usr.UserID)
+						checkErr(err, res)
+
+						affected, err := result.RowsAffected()
+
+						if affected < 1 {
+							err = fmt.Errorf("No insert, please verify category: %d", exp.ExpenseCategory)
+							checkErr(err, res)
+						}
+					} else {
+						prep, err := DB_CONNECTION.Prepare("DELETE FROM expense_cat T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id WHERE T3.split_id = ?, T2.user_id = ?")
+						checkErr(err, res)
+						result, err := prep.Exec(exp.ExpenseCategory, splitid, usr.UserID)
+						checkErr(err, res)
+					}
+
+					if exp.UnderBudgetID != 0 {
+						prep, err := DB_CONNECTION.Prepare("UPDATE budget_expenses T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id SET T1.budget_id = ? WHERE T3.split_id = ?, T2.user_id = ?")
+						checkErr(err, res)
+						result, err := prep.Exec(splitid, usr.UserID)
+						checkErr(err, res)
+
+						affected, err := result.RowsAffected()
+						
+						if affected < 1 {
+							err = fmt.Errorf("No insert, please verify budget ID %d exists", exp.UnderBudgetID)
+							checkErr(err, res)
+						}
+					} else {
+						prep, err := DB_CONNECTION.Prepare("DELETE FROM budget_expenses T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id WHERE T3.split_id = ?, T2.user_id = ?")
+						checkErr(err, res)
+						result, err := prep.Exec(splitid, usr.UserID)
+						checkErr(err, res)
+					}
+				}
+			}
+
+			for _, uid := range uidsInDB {
+				prep, err := DB_CONNECTION.Prepare("DELETE FROM expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id WHERE T3.split_id = ?, T2.user_id = ?")
+				checkErr(err, res)
+				result, err := prep.Exec(splitid, uid)
+				checkErr(err, res)
+
+				affected, err := result.RowsAffected()
+
+				if affected > 1 {
+					err = fmt.Errorf("Too many rows were affected, please user id: %d", uid)
+					checkErr(err, res)
+				}
+			}
+		}
+
+		outgoingJson, err := json.Marshal(exp)
+		checkErr(err, res)
+
+		res.WriteHeader(http.StatusOK)
+		fmt.Fprint(res, string(outgoingJson))
+
 	case "POST":
 		res.WriteHeader(http.StatusMethodNotAllowed)
 	case "DELETE":
