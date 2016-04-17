@@ -222,10 +222,3 @@ func HandleUserBudgets(res http.ResponseWriter, req *http.Request) {
 		res.WriteHeader(http.StatusOK)
 	}
 }
-
-func checkErr(err error, res http.ResponseWriter) {
-	if err != nil {
-		http.Error(res, err.Error(), http.StatusBadRequest)
-		return
-	}
-}
