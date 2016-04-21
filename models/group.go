@@ -18,6 +18,7 @@ type Group struct {
 
 func HandleGroup(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 
 	switch req.Method {
 	case "POST":
@@ -79,10 +80,11 @@ func HandleGroup(res http.ResponseWriter, req *http.Request) {
 
 func HandleGroupWithID(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 	vars := mux.Vars(req)
-	gid := vars["id"]
-
-	fmt.Println(gid)
+	gidstr := vars["id"]
+	gid, err := strconv.ParseInt(gidstr, 10, 64)
+	checkErr(err, res)
 
 	switch req.Method {
 	case "GET":
@@ -223,8 +225,11 @@ func HandleGroupWithID(res http.ResponseWriter, req *http.Request) {
 
 func HandleGroupExpenses(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 	vars := mux.Vars(req)
-	gid := vars["id"]
+	gidstr := vars["id"]
+	gid, err := strconv.ParseInt(gidstr, 10, 64)
+	checkErr(err, res)
 
 	switch req.Method {
 	case "GET":
@@ -278,8 +283,11 @@ func HandleGroupExpenses(res http.ResponseWriter, req *http.Request) {
 
 func HandleGroupBudgets(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 	vars := mux.Vars(req)
-	gid := vars["id"]
+	gidstr := vars["id"]
+	gid, err := strconv.ParseInt(gidstr, 10, 64)
+	checkErr(err, res)
 
 	switch req.Method {
 	case "GET":
@@ -306,8 +314,6 @@ func HandleGroupBudgets(res http.ResponseWriter, req *http.Request) {
 		
 			err = prep.QueryRow(b.BudgetID).Scan(&b.BudgetCategory)
 			checkErr(err, res)
-
-			b.BudgetGID, err = strconv.ParseInt(gid, 10, 64)
 
 			budgetSlice = append(budgetSlice, b)
 		}

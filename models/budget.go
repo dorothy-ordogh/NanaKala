@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	"net/http"
+	"strconv"
 )
 
 type Budget struct {
@@ -18,6 +19,7 @@ type Budget struct {
 
 func HandleBudget(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 
 	switch req.Method {
 	case "POST":
@@ -89,8 +91,11 @@ func HandleBudget(res http.ResponseWriter, req *http.Request) {
 
 func HandleBudgetWithID(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 	vars := mux.Vars(req)
-	bid := vars["id"]
+	bidstr := vars["id"]
+	bid, err := strconv.ParseInt(bidstr, 10, 64)
+	checkErr(err, res)
 
 	switch req.Method {
 	case "GET":

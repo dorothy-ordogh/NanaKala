@@ -8,6 +8,7 @@ import (
 	"time"
 	"math/rand"
 	"io/ioutil"
+	"strconv"
 )
 
 type Expense struct {
@@ -28,6 +29,7 @@ type Split struct {
 
 func HandleExpense(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 
 	switch req.Method {
 	case "POST":
@@ -46,6 +48,8 @@ func HandleExpense(res http.ResponseWriter, req *http.Request) {
 		checkErr(err, res)
 		err = json.Unmarshal(body, &exp)
 		checkErr(err, res)
+
+		fmt.Println(exp)
 
 		if exp.ExpenseGID != 0 {
 			// insert into group expense 
@@ -182,8 +186,11 @@ func HandleExpense(res http.ResponseWriter, req *http.Request) {
 
 func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 	vars := mux.Vars(req)
-	expid := vars["id"]
+	expidstr := vars["id"]
+	expid, err := strconv.ParseInt(expidstr, 10, 64)
+	checkErr(err, res)
 	
 	switch req.Method {
 	case "GET":
@@ -283,6 +290,8 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 		err = json.Unmarshal(body, &exp)
 		checkErr(err, res)
 
+		fmt.Println(exp)
+
 		var exists int
 		prep, err := DB_CONNECTION.Prepare("SELECT EXISTS(SELECT 1 FROM expense WHERE expense_id = ?)")
 		checkErr(err, res)
@@ -306,7 +315,7 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 		}
 
 		if exp.ExpenseCategory != 0 {
-			result, err := DB_CONNECTION.Exec("UPDATE expense_cat SET cat_id = ? WHERE expense_id = ?", exp.ExpenseCategory, expid)
+			result, err := DB_CONNECTION.Exec("UPDATE IGNORE expense_cat SET cat_id = ? WHERE expense_id = ?", exp.ExpenseCategory, expid)
 			checkErr(err, res)
 
 			affected, err := result.RowsAffected()
@@ -321,7 +330,7 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 		}
 
 		if exp.UnderBudgetID != 0 {
-			result, err := DB_CONNECTION.Exec("UPDATE budget_expenses SET budget_id = ? WHERE expense_id = ?", exp.UnderBudgetID, expid)
+			result, err := DB_CONNECTION.Exec("UPDATE IGNORE budget_expenses SET budget_id = ? WHERE expense_id = ?", exp.UnderBudgetID, expid)
 			checkErr(err, res)
 
 			affected, err := result.RowsAffected()
@@ -336,7 +345,7 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 		}
 
 		if exp.ExpenseGID != 0 {
-			result, err = DB_CONNECTION.Exec("UPDATE group_expenses SET group_id = ? WHERE expense_id = ?", exp.ExpenseGID, expid)
+			result, err = DB_CONNECTION.Exec("UPDATE IGNORE group_expenses SET group_id = ? WHERE expense_id = ?", exp.ExpenseGID, expid)
 			checkErr(err, res)
 
 			affected, err := result.RowsAffected()
@@ -387,7 +396,7 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 					uidsInDB = append(uidsInDB[:contains], uidsInDB[contains+1:]...)
 				}
 
-				prep, err := DB_CONNECTION.Prepare("UPDATE expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id SET T1.expense_amt = ?, T1.expense_name = ? WHERE T1.split_id = ? AND T2.user_id = ?")
+				prep, err := DB_CONNECTION.Prepare("UPDATE IGNORE expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id SET T1.expense_amt = ?, T1.expense_name = ? WHERE T1.split_id = ? AND T2.user_id = ?")
 				checkErr(err, res)
 
 				result, err := prep.Exec(split.SplitAmount, exp.ExpenseName, splitid, usr.UserID)
@@ -396,13 +405,13 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 				affected, err := result.RowsAffected()
 
 				if affected < 1 {
-					result, err = DB_CONNECTION.Exec("INSERT INTO expense (expense_id, expense_amt, expense_name, split_id) VALUES (?, ?, ?, ?)", nil, split.SplitAmount, exp.ExpenseName, splitid)
+					result, err = DB_CONNECTION.Exec("INSERT IGNORE INTO expense (expense_id, expense_amt, expense_name, split_id) VALUES (?, ?, ?, ?) ON DUPLICATE", nil, split.SplitAmount, exp.ExpenseName, splitid)
 					checkErr(err, res)
 
 					usrExpenseId, err = result.LastInsertId()
 					checkErr(err, res)
 
-					result, err = DB_CONNECTION.Exec("INSERT INTO user_expenses (expense_id, user_id) VALUES (?, ?)", usrExpenseId, usr.UserID)
+					result, err = DB_CONNECTION.Exec("INSERT IGNORE INTO user_expenses (expense_id, user_id) VALUES (?, ?)", usrExpenseId, usr.UserID)
 					checkErr(err, res)
 
 					affected, err := result.RowsAffected()
@@ -413,7 +422,7 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 					}
 
 					if exp.ExpenseCategory != 0 {
-						result, err := DB_CONNECTION.Exec("INSERT INTO expense_cat (cat_id, expense_id) VALUES (?, ?)", exp.ExpenseCategory, usrExpenseId)
+						result, err := DB_CONNECTION.Exec("INSERT IGNORE INTO expense_cat (cat_id, expense_id) VALUES (?, ?)", exp.ExpenseCategory, usrExpenseId)
 						checkErr(err, res)
 
 						affected, err := result.RowsAffected()
@@ -425,7 +434,7 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 					}
 
 					if exp.UnderBudgetID != 0 {
-						result, err := DB_CONNECTION.Exec("INSERT INTO budget_expenses (expense_id, budget_id) VALUES (?, ?)", usrExpenseId, exp.UnderBudgetID)
+						result, err := DB_CONNECTION.Exec("INSERT IGNORE INTO budget_expenses (expense_id, budget_id) VALUES (?, ?)", usrExpenseId, exp.UnderBudgetID)
 						checkErr(err, res)
 
 						affected, err := result.RowsAffected()
@@ -437,7 +446,7 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 					}
 				} else {
 					if exp.ExpenseCategory != 0 {
-						prep, err := DB_CONNECTION.Prepare("UPDATE expense_cat T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id SET T1.cat_id = ? WHERE T3.split_id = ? AND T2.user_id = ?")
+						prep, err := DB_CONNECTION.Prepare("UPDATE IGNORE expense_cat T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id SET T1.cat_id = ? WHERE T3.split_id = ? AND T2.user_id = ?")
 						checkErr(err, res)
 						result, err := prep.Exec(exp.ExpenseCategory, splitid, usr.UserID)
 						checkErr(err, res)
@@ -451,14 +460,14 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 					} else {
 						prep, err := DB_CONNECTION.Prepare("DELETE T1.* FROM expense_cat T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id WHERE T3.split_id = ? AND T2.user_id = ?")
 						checkErr(err, res)
-						_, err = prep.Exec(exp.ExpenseCategory, splitid, usr.UserID)
+						_, err = prep.Exec(splitid, usr.UserID)
 						checkErr(err, res)
 					}
 
 					if exp.UnderBudgetID != 0 {
-						prep, err := DB_CONNECTION.Prepare("UPDATE budget_expenses T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id SET T1.budget_id = ? WHERE T3.split_id = ? AND T2.user_id = ?")
+						prep, err := DB_CONNECTION.Prepare("UPDATE IGNORE budget_expenses T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id INNER JOIN expense T3 ON T3.expense_id = T2.expense_id SET T1.budget_id = ? WHERE T3.split_id = ? AND T2.user_id = ?")
 						checkErr(err, res)
-						result, err := prep.Exec(splitid, usr.UserID)
+						result, err := prep.Exec(exp.UnderBudgetID, splitid, usr.UserID)
 						checkErr(err, res)
 
 						affected, err := result.RowsAffected()
@@ -518,4 +527,19 @@ func HandleExpenseWithID(res http.ResponseWriter, req *http.Request) {
 
 		res.WriteHeader(http.StatusOK)
 	}
+}
+
+
+func GetExpenseID(res *http.Response) int64 {
+	exp := new(Expense)
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		fmt.Println("Couldn't read body")
+	}
+	err = json.Unmarshal(body, &exp)
+	if err != nil {
+		fmt.Println("Couldn't unmarshal body")
+	}
+
+	return exp.ExpenseID
 }

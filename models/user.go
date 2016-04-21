@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/gorilla/mux"
 	"net/http"
+	"strconv"
 )
 
 type User struct {
@@ -18,6 +19,7 @@ type User struct {
 
 func HandleUser(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 
 	switch req.Method {
 	case "POST":
@@ -46,8 +48,11 @@ func HandleUser(res http.ResponseWriter, req *http.Request) {
 
 func HandleUserWithID(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 	vars := mux.Vars(req)
-	userid := vars["id"]
+	useridstr := vars["id"]
+	userid, err := strconv.ParseInt(useridstr, 10, 64)
+	checkErr(err, res)
 
 	switch req.Method {
 	case "GET":
@@ -112,19 +117,23 @@ func HandleUserWithID(res http.ResponseWriter, req *http.Request) {
 
 func HandleUserExpenses(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 	vars := mux.Vars(req)
-	userid := vars["id"]
+	useridstr := vars["id"]
+	userid, err := strconv.ParseInt(useridstr, 10, 64)
+	checkErr(err, res)
 
 	switch req.Method {
 	case "GET":
 		// lookup user expenses and return all
 
-		expenseSlice := make([]Expense, 1)
+		expenseSlice := make([]Expense, 0)
 
-		prep, err := DB_CONNECTION.Prepare("SELECT expense_id, expense_amt, split_id, expense_name FROM expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id WHERE T2.user_id = ?")
+		prep, err := DB_CONNECTION.Prepare("SELECT T1.expense_id, T1.expense_amt, T1.split_id, COALESCE(T1.expense_name, '') as name FROM expense T1 INNER JOIN user_expenses T2 ON T1.expense_id = T2.expense_id WHERE T2.user_id = ?")
 		checkErr(err, res)
 		
 		rows, err := prep.Query(userid)
+		checkErr(err, res)
 
 		for rows.Next() {
 			var exp Expense 
@@ -173,19 +182,23 @@ func HandleUserExpenses(res http.ResponseWriter, req *http.Request) {
 
 func HandleUserBudgets(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "application/json")
+	res.Header().Add("Access-Control-Allow-Origin", "*")
 	vars := mux.Vars(req)
-	userid := vars["id"]
+	useridstr := vars["id"]
+	userid, err := strconv.ParseInt(useridstr, 10, 64)
+	checkErr(err, res)
 
 	switch req.Method {
 	case "GET":
 		// lookup user budgets and return all
-		budgetSlice := make([]Budget, 1)
+		budgetSlice := make([]Budget, 0)
 
-		prep, err := DB_CONNECTION.Prepare("SELECT budget_id, budget_amt, budget_name FROM budget T1 INNER JOIN user_budgets T2 ON T1.budget_id = T2.budget_id WHERE T2.user_id = ?")
+		prep, err := DB_CONNECTION.Prepare("SELECT T1.budget_id, T1.budget_amt, T1.budget_name FROM budget T1 INNER JOIN user_budgets T2 ON T1.budget_id = T2.budget_id WHERE T2.user_id = ?")
 		checkErr(err, res)
-		
+		fmt.Println(userid)
 		rows, err := prep.Query(userid)
-
+		checkErr(err, res)
+		fmt.Println(rows)
 		for rows.Next() {
 			var b Budget 
 			err = rows.Scan(&b.BudgetID, &b.BudgetAmount, &b.BudgetName)
@@ -221,4 +234,15 @@ func HandleUserBudgets(res http.ResponseWriter, req *http.Request) {
 
 		res.WriteHeader(http.StatusOK)
 	}
+}
+
+func GetUserID(res *http.Response) int64 {
+	user := new(User)
+	decoder := json.NewDecoder(res.Body)
+	err := decoder.Decode(&user)
+	if err != nil {
+		fmt.Println("User could not be unmarshalled")
+	}
+
+	return user.UserID
 }

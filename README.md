@@ -2,6 +2,9 @@
 What is NanaKala? In Hawaiian, "nana" is to watch or observe, and "kala" is money. This project is for UBC's CPSC 448 (directed studies) course. I proposed to develop a REST API which would help track, and split expenses amongst users and groups, as well as budget money. 
 
 ### Setting up
+
+The server is written in Go because I liked the idea of exploring a new language with this project, in addition to how simple some things were to implement when compared to other languages. Of course, there are some downsides, like having to vary json unmarshalling depending on the type of data; however, I still feel it was worth it. 
+
 #### Setting up the Server
 NanaKala runs on Go 1.5.3 and uses MySql 5.7.11. Please make sure your system is running these versions to guarantee successful integration.
 
@@ -23,6 +26,34 @@ I have provided scripts that will set up all the tables you will need to run the
 There is one thing you will need to complete manually: the setting up of the categories the budgets and expenses can belong to. The table must have some content in order to work, so I have included one row in its creation, but please make sure to customize it in the way you see fit. Of course, because the categories being sent to the server are numerical values, these are the integer IDs for the category, I suggest you have some kind of enumeration on the front end to make selecting categories more user-friendly.
 
 In order to easily accomplish adding categories to the table, I have included a sample script called "addcategories.sql" in the scripts folder that can be altered and used.
+
+Once you have the database up and running, please change user, password, IpAddr, Port, and DBName on line 14 of db.go to the appropriate values so that the server knows where and how to access the database. Make sure to keep the formatting as is. For example,
+
+```
+username: test
+password: pumpkin
+IpAddr: 123.456.789
+Port: 3000
+DBName: NanaKalaDB
+```
+
+Then line 14 would appear as,
+
+```
+"test:pumpkin@tcp(123.456.789:3000)/NanaKalaDB")
+```
+
+#### Starting the Server
+
+To start the server, just type the following command into the command line once the database has started running:
+
+```
+$ go run main.go
+```
+
+#### Stopping the Server
+
+To stop the server, simply execute ```ctrl-c``` in the command line where it is running.
 
 ### Components of the system:
 - User
@@ -89,6 +120,8 @@ The users field in the group objects represents the users that are in the group.
 A note on how expenses work: 
 If you are submitting an expense for a single user, you must add the user information and the information required in the split object (i.e. user and amount) in order to correctly assign the information to that one user. The same goes for several users. 
 
+In addition, to access and edit the expense for the one user, you need to use the expense ID returned from the post request. This is important so that no duplicates occur in the database (there is an issue to refactor everything so that this won't be a requirement in the future).
+
 If you are submitting an expense for a group, you must include the "gid" field with the group's ID and then the expense will be assigned to the group BUT NOT TO EACH INDIVIDUAL USER IN THE GROUP.
 
 The "budgetid" field is to associate the expense with a certian budget identified by its ID.
@@ -138,7 +171,7 @@ or for a group expense:
 Budgets work as you would expect them to. 
 
 Note:
-If you include a "uid" field with a value, the budget will be associated with a user, and if you include the "gid" field, it will be associated with a group. IT CANNOT BE ASSOCIATED WITH BOTH AT THE SAME TIME. 
+If you include a "uid" field with a value, the budget will be associated with a user, and if you include the "gid" field, it will be associated with a group. IT CANNOT BE ASSOCIATED WITH BOTH AT THE SAME TIME. Additionally, you must be certain that the group or user ID exists before making a POST or PUT with that ID.
 ```
 {
 	"id": 128398281,
@@ -158,3 +191,7 @@ or for a group budget:
 	"gid": 0987654321
 }
 ```
+
+
+NOTES:
+- Splitting expenses adds an expense for each user that the expense has been split with, and an expense that encapsulates the two. To retrieve the expense that displays the users and the amount the expense has been split with, use the id that is returned on the POST request. To retreive the expense for just the user, query all of the user's expenses and get the id for that expense from there. 
